@@ -115,7 +115,7 @@ pipeline {
                         // Check the exit status of the Anchore policy evaluation
                         // A non-zero exit status usually indicates a policy violation.
                         // Corrected comparison: use '==' for equality, and '!= 0' for failure
-                        if (anchorePolicyCheckResult = 0) {
+                        if (anchorePolicyCheckResult != 0) {
                             error "Anchore policy evaluation failed for ${FULL_DOCKER_IMAGE}. Check logs for details."
                         } else {
                             echo "Anchore policy evaluation passed for ${FULL_DOCKER_IMAGE}."
@@ -123,10 +123,12 @@ pipeline {
 
                         // Optional: Generate an SBOM (Software Bill of Materials) report
                         echo "Generating SBOM for ${FULL_DOCKER_IMAGE}"
-                        
+                        sh """
+                            anchorectl system status
+                        """
                         // Corrected: archive artifacts moved outside the credentials block if needed globally.
                         // For now, it's inside, and if it fails, it's usually due to the above.
-                       // archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
+                        // archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
                     }
                 }
             }
