@@ -11,16 +11,16 @@ pipeline {
     // Environment variables for the pipeline
     environment {
         // Docker image name and tag
-        DOCKER_IMAGE_NAME = "joshua" // e.g., my-app
+        DOCKER_IMAGE_NAME = "joshua" // Using the image name from your logs
         DOCKER_IMAGE_TAG = "latest"
         // Full Docker image name including registry (if pushing)
-        FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // e.g., myuser/my-app:latest
+        FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // Using your Docker Hub username from logs
 
         // Anchore API endpoint (ANCHORE_ENGINE_URL is the standard variable name used by Anchore CLI to point to the core service)
-        ANCHORE_ENGINE_URL = "https://anchore.nizati.com/v1" // Replace with your Anchore host/IP
+        ANCHORE_ENGINE_URL = "http://anchore_host:8228/v1" // Replace with your Anchore host/IP
         // Anchore Analyzer URL (internal URL for Jenkins agent to reach Anchore's Analyzer service)
         // This is often the same as ANCHORE_ENGINE_URL if running locally or accessible.
-        ANCHORE_ANALYZER_URL = "https://anchore.nizati.com/v1" // Replace if different
+        ANCHORE_ANALYZER_URL = "http://anchore_host:8228/v1" // Replace if different
         // Policy to evaluate against (optional, 'default' is common)
         ANCHORE_POLICY = "default"
     }
@@ -31,28 +31,27 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo "Checking out source code..."
-                // Checkout the repository where the Jenkinsfile and Dockerfile reside.
-                // This is implicitly done by 'Pipeline script from SCM' setup,
-                // but 'git scm' can be used for explicit control or multiple repos.
                 script {
                     checkout scm
                 }
             }
         }
 
-        // NEW STAGE: Install Docker CLI
+        // Stage: Install Docker CLI
         // This stage installs the Docker CLI client inside the Jenkins agent container.
         // This is necessary because the default Jenkins image does not include the 'docker' command.
         // The Docker socket must be mounted from the host to allow this client to communicate with the host's Docker daemon.
+        // Using 'sudo' is crucial here as apt-get commands require root privileges.
         stage('Install Docker CLI') {
             steps {
                 echo "Installing Docker CLI tools in the Jenkins agent..."
                 sh '''
+                    # Ensure sudo is available and working (it usually is in Jenkins containers)
                     # Suppress apt-get output for cleaner logs
-                    apt-get update -qq > /dev/null
+                    sudo apt-get update -qq > /dev/null
                     
                     # Install prerequisites for adding Docker's official GPG key and repository
-                    apt-get install -y --no-install-recommends \
+                    sudo apt-get install -y --no-install-recommends \
                     apt-transport-https \
                     ca-certificates \
                     curl \
@@ -60,17 +59,17 @@ pipeline {
                     lsb-release
 
                     # Add Docker's official GPG key
-                    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
                     
                     # Add Docker's stable repository
                     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \
-                    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                    $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
                     
                     # Update apt-get again to recognize the new Docker repository
-                    apt-get update -qq > /dev/null
+                    sudo apt-get update -qq > /dev/null
                     
                     # Install the Docker CLI client (docker-ce-cli)
-                    apt-get install -y --no-install-recommends docker-ce-cli
+                    sudo apt-get install -y --no-install-recommends docker-ce-cli
                     
                     # Verify docker client is installed and accessible
                     docker --version
@@ -78,7 +77,7 @@ pipeline {
             }
         }
 
-        // Stage 2: Build Docker Image
+        // Stage: Build Docker Image
         stage('Build Docker Image') {
             steps {
                 echo "Building Docker image: ${FULL_DOCKER_IMAGE}"
@@ -90,16 +89,12 @@ pipeline {
             }
         }
 
-        // Stage 3: Push Docker Image to Registry (Optional)
-        // Uncomment this stage if you need to push the image to a registry
-        // (e.g., Docker Hub, private registry) before scanning.
+        // Stage: Push Docker Image to Registry (Optional)
         /*
         stage('Push Docker Image') {
             steps {
                 echo "Pushing Docker image: ${FULL_DOCKER_IMAGE} to Docker Hub..."
                 script {
-                    // Use 'withRegistry' to authenticate with the Docker registry
-                    // The 'DOCKER_REGISTRY_CREDENTIALS' ID must match the one configured in Jenkins Credentials.
                     docker.withRegistry('https://index.docker.io/v1/', 'DOCKER_REGISTRY_CREDENTIALS') {
                         docker.image("${FULL_DOCKER_IMAGE}").push()
                     }
@@ -108,20 +103,13 @@ pipeline {
         }
         */
 
-        // Stage 4: Scan Docker Image with Anchore
+        // Stage: Scan with Anchore
         stage('Scan with Anchore') {
             steps {
                 echo "Scanning Docker image with Anchore: ${FULL_DOCKER_IMAGE}"
                 script {
-                    // Bind Anchore credentials from Jenkins to environment variables
-                    // These variables (ANCHORE_USER, ANCHORE_PASS) will be available
-                    // only within this 'withCredentials' block.
                     withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORE_CLI_USER'),
                                      string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORE_CLI_PASS')]) {
-                        // Run the Anchore CLI within a Docker container.
-                        // This ensures all necessary Anchore tools are available.
-                        // The Anchore CLI container needs network access to the Anchore service.
-                        // It also needs to be able to pull the image it is going to scan.
                         sh """
                             docker run --rm \
                                 -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
@@ -133,7 +121,6 @@ pipeline {
                                 image add ${FULL_DOCKER_IMAGE}
                         """
 
-                        // Wait for the image analysis to complete in Anchore
                         echo "Waiting for image analysis to complete in Anchore..."
                         sh """
                             docker run --rm \
@@ -144,7 +131,6 @@ pipeline {
                                 image wait ${FULL_DOCKER_IMAGE}
                         """
 
-                        // Evaluate the image against a policy
                         echo "Evaluating image against policy: ${ANCHORE_POLICY}"
                         def anchorePolicyCheckResult = sh(script: """
                             docker run --rm \
@@ -153,17 +139,14 @@ pipeline {
                                 -e ANCHORE_CLI_URL=${ANCHORE_ENGINE_URL} \
                                 anchore/cli:latest \
                                 image check --policy ${ANCHORE_POLICY} ${FULL_DOCKER_IMAGE}
-                        """, returnStatus: true) // Return the exit status
+                        """, returnStatus: true)
 
-                        // Check the exit status of the Anchore policy evaluation
-                        // A non-zero exit status usually indicates a policy violation.
                         if (anchorePolicyCheckResult != 0) {
                             error "Anchore policy evaluation failed for ${FULL_DOCKER_IMAGE}. Check logs for details."
                         } else {
                             echo "Anchore policy evaluation passed for ${FULL_DOCKER_IMAGE}."
                         }
 
-                        // Optional: Generate an SBOM (Software Bill of Materials) report
                         echo "Generating SBOM for ${FULL_DOCKER_IMAGE}"
                         sh """
                             docker run --rm \
