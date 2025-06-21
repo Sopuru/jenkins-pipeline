@@ -18,7 +18,7 @@ pipeline {
         FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // Example Docker Hub username/image
 
         // Anchore API endpoint (ANCHORE_CLI_URL is used by anchorectl to connect to the Anchore service)
-        ANCHORE_CLI_URL = "http://anchore_host:8228/v1" // Replace with your Anchore host/IP
+        ANCHORE_CLI_URL = "http://anchore_host:8228/" // Replace with your Anchore host/IP
         // Policy to evaluate against (optional, 'default' is common)
         ANCHORE_POLICY = "default"
         // anchorectl version to install
