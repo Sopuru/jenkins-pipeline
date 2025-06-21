@@ -115,7 +115,7 @@ pipeline {
                         // Check the exit status of the Anchore policy evaluation
                         // A non-zero exit status usually indicates a policy violation.
                         // Corrected comparison: use '==' for equality, and '!= 0' for failure
-                        if (anchorePolicyCheckResult != 0) {
+                        if (anchorePolicyCheckResult = 0) {
                             error "Anchore policy evaluation failed for ${FULL_DOCKER_IMAGE}. Check logs for details."
                         } else {
                             echo "Anchore policy evaluation passed for ${FULL_DOCKER_IMAGE}."
