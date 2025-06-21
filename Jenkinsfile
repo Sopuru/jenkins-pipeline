@@ -37,16 +37,30 @@ pipeline {
             }
         }
 
-        // Stage: Install Docker CLI
-        // This stage installs the Docker CLI client inside the Jenkins agent container.
-        // This is necessary because the default Jenkins image does not include the 'docker' command.
+        // Stage: Install Docker CLI and Sudo
+        // This stage first installs 'sudo' if it's missing, then proceeds to install the Docker CLI client.
         // The Docker socket must be mounted from the host to allow this client to communicate with the host's Docker daemon.
-        // Using 'sudo' is crucial here as apt-get commands require root privileges.
-        stage('Install Docker CLI') {
+        stage('Install Docker CLI Prerequisites') {
             steps {
-                echo "Installing Docker CLI tools in the Jenkins agent..."
+                echo "Installing sudo and Docker CLI tools in the Jenkins agent..."
                 sh '''
-                    # Ensure sudo is available and working (it usually is in Jenkins containers)
+                    # First, update apt-get to ensure we can find packages, if it fails, try installing apt-get first.
+                    # This initial update might need to be done without sudo if sudo isn't present yet,
+                    # but typically apt-get update itself doesn't require root directly for reading.
+                    # If the error "E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)" persists here,
+                    # it indicates that even the initial read permissions are problematic or the directory structure is broken.
+                    apt-get update -qq > /dev/null
+
+                    # Install sudo - this must be done by root or an existing sudo user.
+                    # In a Docker container, often the initial shell context allows for direct root commands without sudo
+                    # if the container user is root, or a specific entrypoint handles permissions.
+                    # Let's try installing sudo first, and then use it.
+                    # If 'sudo' itself requires root to install, this needs to be a 'root' user context.
+                    # The jenkins/jenkins:lts image typically runs as 'jenkins' user, which has some permissions.
+                    # Let's try without explicit 'sudo' for 'apt-get install sudo' first, as some base images might allow it.
+                    apt-get install -y --no-install-recommends sudo > /dev/null || true # Install sudo, ignore error if already there or fails
+                    
+                    # Now that sudo should be available, use it for subsequent privileged commands
                     # Suppress apt-get output for cleaner logs
                     sudo apt-get update -qq > /dev/null
                     
@@ -82,8 +96,6 @@ pipeline {
             steps {
                 echo "Building Docker image: ${FULL_DOCKER_IMAGE}"
                 script {
-                    // Use the 'docker' DSL provided by Docker Pipeline plugin
-                    // build(): Builds a Docker image from a Dockerfile
                     docker.build "${FULL_DOCKER_IMAGE}", "--pull ."
                 }
             }
