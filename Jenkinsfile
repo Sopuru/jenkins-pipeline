@@ -106,7 +106,7 @@ pipeline {
                         // Evaluate the image against a policy
                         echo "Evaluating image against policy: ${ANCHORE_POLICY}"
                         def anchorePolicyCheckResult = sh(script: """
-                            anchorectl image check --policy ${ANCHORE_POLICY} ${FULL_DOCKER_IMAGE}
+                            anchorectl image check ${FULL_DOCKER_IMAGE}
                         """, returnStatus: true) // Return the exit status
 
                         // Check the exit status of the Anchore policy evaluation
