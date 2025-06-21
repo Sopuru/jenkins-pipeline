@@ -1,6 +1,6 @@
 // Jenkinsfile for Docker Image Build and Anchore Scanning
 // This is a declarative pipeline that automates building, tagging,
-// pushing (optional), and scanning a Docker image with Anchore Engine.
+// pushing (optional), and scanning a Docker image with Anchore.
 
 pipeline {
     // Define the agent where the pipeline will run.
@@ -11,16 +11,16 @@ pipeline {
     // Environment variables for the pipeline
     environment {
         // Docker image name and tag
-        DOCKER_IMAGE_NAME = "your-image-name" // e.g., my-app
+        DOCKER_IMAGE_NAME = "joshua" // e.g., my-app
         DOCKER_IMAGE_TAG = "latest"
         // Full Docker image name including registry (if pushing)
-        FULL_DOCKER_IMAGE = "your-dockerhub-username/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // e.g., myuser/my-app:latest
+        FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // e.g., myuser/my-app:latest
 
-        // Anchore Engine API endpoint
-        ANCHORE_ENGINE_URL = "http://anchore_engine_host:8228/v1" // Replace with your Anchore Engine host/IP
+        // Anchore API endpoint (ANCHORE_ENGINE_URL is the standard variable name used by Anchore CLI to point to the core service)
+        ANCHORE_ENGINE_URL = "https://anchore.nizati.com/v1" // Replace with your Anchore host/IP
         // Anchore Analyzer URL (internal URL for Jenkins agent to reach Anchore's Analyzer service)
         // This is often the same as ANCHORE_ENGINE_URL if running locally or accessible.
-        ANCHORE_ANALYZER_URL = "http://anchore_engine_host:8228/v1" // Replace if different
+        ANCHORE_ANALYZER_URL = "https://anchore.nizati.com/v1" // Replace if different
         // Policy to evaluate against (optional, 'default' is common)
         ANCHORE_POLICY = "default"
     }
@@ -37,6 +37,44 @@ pipeline {
                 script {
                     checkout scm
                 }
+            }
+        }
+
+        // NEW STAGE: Install Docker CLI
+        // This stage installs the Docker CLI client inside the Jenkins agent container.
+        // This is necessary because the default Jenkins image does not include the 'docker' command.
+        // The Docker socket must be mounted from the host to allow this client to communicate with the host's Docker daemon.
+        stage('Install Docker CLI') {
+            steps {
+                echo "Installing Docker CLI tools in the Jenkins agent..."
+                sh '''
+                    # Suppress apt-get output for cleaner logs
+                    apt-get update -qq > /dev/null
+                    
+                    # Install prerequisites for adding Docker's official GPG key and repository
+                    apt-get install -y --no-install-recommends \
+                    apt-transport-https \
+                    ca-certificates \
+                    curl \
+                    gnupg \
+                    lsb-release
+
+                    # Add Docker's official GPG key
+                    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    
+                    # Add Docker's stable repository
+                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \
+                    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                    
+                    # Update apt-get again to recognize the new Docker repository
+                    apt-get update -qq > /dev/null
+                    
+                    # Install the Docker CLI client (docker-ce-cli)
+                    apt-get install -y --no-install-recommends docker-ce-cli
+                    
+                    # Verify docker client is installed and accessible
+                    docker --version
+                '''
             }
         }
 
@@ -82,7 +120,7 @@ pipeline {
                                      string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORE_CLI_PASS')]) {
                         // Run the Anchore CLI within a Docker container.
                         // This ensures all necessary Anchore tools are available.
-                        // The Anchore CLI container needs network access to the Anchore Engine.
+                        // The Anchore CLI container needs network access to the Anchore service.
                         // It also needs to be able to pull the image it is going to scan.
                         sh """
                             docker run --rm \
@@ -95,8 +133,8 @@ pipeline {
                                 image add ${FULL_DOCKER_IMAGE}
                         """
 
-                        // Wait for the image analysis to complete in Anchore Engine
-                        echo "Waiting for image analysis to complete..."
+                        // Wait for the image analysis to complete in Anchore
+                        echo "Waiting for image analysis to complete in Anchore..."
                         sh """
                             docker run --rm \
                                 -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
@@ -135,7 +173,7 @@ pipeline {
                                 anchore/cli:latest \
                                 image sbom ${FULL_DOCKER_IMAGE} spdx > ${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json
                         """
-                         archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
+                        archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
                     }
                 }
             }
@@ -149,7 +187,7 @@ pipeline {
         }
         // Add a clean-up step if you want to remove the local Docker image after scan
         // This is useful to free up disk space on the Jenkins agent.
-        // Note: This will not remove the image from Anchore Engine, only from the local Docker daemon.
+        // Note: This will not remove the image from Anchore, only from the local Docker daemon.
         /*
         cleanup {
             script {
