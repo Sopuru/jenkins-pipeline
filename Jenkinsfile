@@ -20,7 +20,7 @@ pipeline {
         // Anchore API endpoint (ANCHORE_CLI_URL is used by anchorectl to connect to the Anchore service)
         ANCHORE_CLI_URL = "https://anchore.nizati.com/" // Replace with your Anchore host/IP
         // Policy to evaluate against (optional, 'default' is common)
-        ANCHORE_POLICY = "default"
+        ANCHORE_POLICY = "Anchore Enterprise - Secure v20250101"
         // anchorectl version to install
         ANCHORECTL_VERSION = "v5.18.0"
     }
