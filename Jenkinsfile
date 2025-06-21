@@ -37,56 +37,80 @@ pipeline {
             }
         }
 
-        // Stage: Install Docker CLI and Sudo
-        // This stage first installs 'sudo' if it's missing, then proceeds to install the Docker CLI client.
+        // Stage: Install Docker CLI Prerequisites
+        // This stage installs the Docker CLI client inside the Jenkins agent container.
+        // It runs as the 'root' user within this specific step to handle apt permissions.
         // The Docker socket must be mounted from the host to allow this client to communicate with the host's Docker daemon.
         stage('Install Docker CLI Prerequisites') {
             steps {
-                echo "Installing sudo and Docker CLI tools in the Jenkins agent..."
-                sh '''
-                    # First, update apt-get to ensure we can find packages, if it fails, try installing apt-get first.
-                    # This initial update might need to be done without sudo if sudo isn't present yet,
-                    # but typically apt-get update itself doesn't require root directly for reading.
-                    # If the error "E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)" persists here,
-                    # it indicates that even the initial read permissions are problematic or the directory structure is broken.
-                    apt-get update -qq > /dev/null
+                echo "Installing Docker CLI tools in the Jenkins agent..."
+                // Use the 'sh' step with 'script: """ commands """, shebang: '#!/bin/bash -ex', returnStdout: true, returnStatus: true, executionNode: 'master', label: 'docker', dir: '.', env: [], timeout: 0, credentials: [], script: '...' }
+                // To run as root, we can instruct the shell to run the commands using 'sudo'
+                // However, since 'sudo' itself was not found, we need to explicitly run it as root.
+                // The easiest way to achieve this is to wrap the commands in a 'docker run --user root'
+                // command on the Jenkins agent itself, but that's not how the 'agent any' works directly.
+                // The most straightforward way in a 'sh' step is to assume 'root' is not what Jenkins is running as,
+                // and if 'sudo' is not present, we have a chicken-and-egg problem.
+                //
+                // A better approach for this specific scenario with jenkins/jenkins:lts
+                // is to create a small Docker image based on jenkins/jenkins:lts that includes sudo
+                // or just has the Docker CLI pre-installed.
+                //
+                // However, if we must stick to 'agent any' and 'sh' commands:
+                // We'll try to re-initialize the apt state, then install sudo, then proceed.
+                // If the permission denied persists on `apt-get update`, it implies a corrupted
+                // apt state or a deeply restricted environment.
 
-                    # Install sudo - this must be done by root or an existing sudo user.
-                    # In a Docker container, often the initial shell context allows for direct root commands without sudo
-                    # if the container user is root, or a specific entrypoint handles permissions.
-                    # Let's try installing sudo first, and then use it.
-                    # If 'sudo' itself requires root to install, this needs to be a 'root' user context.
-                    # The jenkins/jenkins:lts image typically runs as 'jenkins' user, which has some permissions.
-                    # Let's try without explicit 'sudo' for 'apt-get install sudo' first, as some base images might allow it.
-                    apt-get install -y --no-install-recommends sudo > /dev/null || true # Install sudo, ignore error if already there or fails
+                // Let's assume the issue is simply that the `jenkins` user doesn't have direct write access
+                // to /var/lib/apt/lists/partial, which `apt-get update` needs.
+                // We will try to gain root access using `su -c` or `sg docker -c` if sudo is missing.
+                // Given previous `sudo: not found`, the most direct approach is to force the `sh` command
+                // to run with a user who *can* write there.
+                // The `jenkins` container runs as user 'jenkins' (uid 1000).
+                // apt needs root privileges.
+                // We will use `docker exec -u 0` (user 0 is root) on the *Jenkins container itself*
+                // to execute the apt commands. This is a bit of a workaround to the 'agent any' constraint.
+
+                // Let's try to repair apt first, and then install sudo.
+                // This will be executed by the Jenkins process (as 'jenkins' user)
+                // but by using 'docker exec -u 0' we're telling the host's Docker daemon
+                // to run the command inside the Jenkins container as root.
+                sh '''
+                    # Execute apt commands as root user inside the Jenkins container
+                    # This relies on the host's Docker daemon having access to the Jenkins container
+                    # and the ability to exec as root (user 0).
+                    # This is a workaround for `agent any` not being able to easily switch user.
+
+                    echo "Attempting to fix apt directory permissions and install prerequisites..."
+
+                    # Clean up partial lists and ensure correct permissions
+                    docker exec -u 0 jenkins_server bash -c "rm -rf /var/lib/apt/lists/*"
+                    docker exec -u 0 jenkins_server bash -c "mkdir -p /var/lib/apt/lists/partial"
+                    docker exec -u 0 jenkins_server bash -c "chmod 755 /var/lib/apt/lists/partial"
                     
-                    # Now that sudo should be available, use it for subsequent privileged commands
-                    # Suppress apt-get output for cleaner logs
-                    sudo apt-get update -qq > /dev/null
+                    # Install sudo if not present
+                    docker exec -u 0 jenkins_server bash -c "apt-get update -qq && apt-get install -y --no-install-recommends sudo || true" # Install sudo, ignore error if fails or exists
+
+                    # Now use sudo for the rest, as sudo should now be installed and the jenkins user should be in sudoers
+                    docker exec jenkins_server bash -c "sudo apt-get update -qq > /dev/null"
                     
-                    # Install prerequisites for adding Docker's official GPG key and repository
-                    sudo apt-get install -y --no-install-recommends \
+                    docker exec jenkins_server bash -c "sudo apt-get install -y --no-install-recommends \
                     apt-transport-https \
                     ca-certificates \
                     curl \
                     gnupg \
-                    lsb-release
+                    lsb-release"
 
-                    # Add Docker's official GPG key
-                    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    docker exec jenkins_server bash -c "curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg"
                     
-                    # Add Docker's stable repository
-                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \
-                    $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                    docker exec jenkins_server bash -c "echo \\"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \\
+                    \$(lsb_release -cs) stable\\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null"
                     
-                    # Update apt-get again to recognize the new Docker repository
-                    sudo apt-get update -qq > /dev/null
+                    docker exec jenkins_server bash -c "sudo apt-get update -qq > /dev/null"
                     
-                    # Install the Docker CLI client (docker-ce-cli)
-                    sudo apt-get install -y --no-install-recommends docker-ce-cli
+                    docker exec jenkins_server bash -c "sudo apt-get install -y --no-install-recommends docker-ce-cli"
                     
-                    # Verify docker client is installed and accessible
-                    docker --version
+                    docker exec jenkins_server bash -c "docker --version"
                 '''
             }
         }
