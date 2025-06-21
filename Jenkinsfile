@@ -17,13 +17,12 @@ pipeline {
         // Full Docker image name including registry (if pushing)
         FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // Example Docker Hub username/image
 
-        // Anchore API endpoint (ANCHORE_ENGINE_URL is the standard variable name used by Anchore CLI to point to the core service)
-        ANCHORE_ENGINE_URL = "http://anchore_host:8228/v1" // Replace with your Anchore host/IP
-        // Anchore Analyzer URL (internal URL for Jenkins agent to reach Anchore's Analyzer service)
-        // This is often the same as ANCHORE_ENGINE_URL if running locally or accessible.
-        ANCHORE_ANALYZER_URL = "http://anchore_host:8228/v1" // Replace if different
+        // Anchore API endpoint (ANCHORE_CLI_URL is used by anchorectl to connect to the Anchore service)
+        ANCHORE_CLI_URL = "http://anchore_host:8228/v1" // Replace with your Anchore host/IP
         // Policy to evaluate against (optional, 'default' is common)
         ANCHORE_POLICY = "default"
+        // anchorectl version to install
+        ANCHORECTL_VERSION = "v5.18.0"
     }
 
     // Stages of the pipeline
@@ -44,7 +43,7 @@ pipeline {
                 echo "Building Docker image: ${FULL_DOCKER_IMAGE}"
                 script {
                     // Use the 'docker' DSL provided by Docker Pipeline plugin
-                    // This now works because the Jenkins master container (my-jenkins-docker-with-cli)
+                    // This works because the Jenkins master container (my-jenkins-docker-with-cli)
                     // has the Docker CLI installed and the Docker socket mounted.
                     docker.build "${FULL_DOCKER_IMAGE}", "--pull ."
                 }
@@ -69,52 +68,46 @@ pipeline {
         }
         */
 
-        // Stage 4: Scan Docker Image with Anchore
+        // NEW STAGE: Install Anchorectl CLI
+        // This stage downloads and installs the anchorectl CLI tool in the Jenkins agent.
+        // It uses the recommended installation script provided by Anchore.
+        stage('Install Anchorectl CLI') {
+            steps {
+                echo "Installing anchorectl CLI version ${ANCHORECTL_VERSION}..."
+                sh """
+                    # Download and execute the anchorectl installation script
+                    # The script handles extraction and placing the binary in /usr/local/bin
+                    # Using sudo as /usr/local/bin often requires root privileges
+                    curl -sSfL https://anchorectl-releases.anchore.io/anchorectl/install.sh | sudo sh -s -- -b /usr/local/bin ${ANCHORECTL_VERSION}
+                    
+                    # Verify anchorectl is installed and accessible
+                    anchorectl --version
+                """
+            }
+        }
+
+        // Stage 5: Scan Docker Image with Anchore (using anchorectl)
         stage('Scan with Anchore') {
             steps {
                 echo "Scanning Docker image with Anchore: ${FULL_DOCKER_IMAGE}"
                 script {
                     // Bind Anchore credentials from Jenkins to environment variables
-                    // These variables (ANCHORE_USER, ANCHORE_PASS) will be available
-                    // only within this 'withCredentials' block.
+                    // These variables (ANCHORE_CLI_USER, ANCHORE_CLI_PASS) are picked up by anchorectl
                     withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORE_CLI_USER'),
                                      string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORE_CLI_PASS')]) {
-                        // Run the Anchore CLI within a Docker container.
-                        // This ensures all necessary Anchore tools are available.
-                        // The Anchore CLI container needs network access to the Anchore service.
-                        // It also needs to be able to pull the image it is going to scan.
-                        sh """
-                            docker run --rm \
-                                -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
-                                -e ANCHORE_CLI_PASS=${ANCHORE_CLI_PASS} \
-                                -e ANCHORE_CLI_URL=${ANCHORE_ENGINE_URL} \
-                                -e ANCHORE_ENGINE_URL=${ANCHORE_ENGINE_URL} \
-                                -e ANCHORE_CLI_ANALYZER_URL=${ANCHORE_ANALYZER_URL} \
-                                anchore/cli:latest \
-                                image add ${FULL_DOCKER_IMAGE}
-                        """
+                        // Add the Docker image to Anchore for analysis
+                        // anchorectl uses ANCHORE_CLI_URL from the environment for connection
+                        sh "anchorectl image add ${FULL_DOCKER_IMAGE}"
 
                         // Wait for the image analysis to complete in Anchore
                         echo "Waiting for image analysis to complete in Anchore..."
-                        sh """
-                            docker run --rm \
-                                -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
-                                -e ANCHORE_CLI_PASS=${ANCHORE_CLI_PASS} \
-                                -e ANCHORE_CLI_URL=${ANCHORE_ENGINE_URL} \
-                                anchore/cli:latest \
-                                image wait ${FULL_DOCKER_IMAGE}
-                        """
+                        sh "anchorectl image wait ${FULL_DOCKER_IMAGE}"
 
                         // Evaluate the image against a policy
                         echo "Evaluating image against policy: ${ANCHORE_POLICY}"
                         def anchorePolicyCheckResult = sh(script: """
-                            docker run --rm \
-                                -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
-                                -e ANCHORE_CLI_PASS=${ANCHORE_CLI_PASS} \
-                                -e ANCHORE_CLI_URL=${ANCHORE_ENGINE_URL} \
-                                anchore/cli:latest \
-                                image check --policy ${ANCHORE_POLICY} ${FULL_DOCKER_IMAGE}
-                        """, returnStatus: true)
+                            anchorectl image check --policy ${ANCHORE_POLICY} ${FULL_DOCKER_IMAGE}
+                        """, returnStatus: true) // Return the exit status
 
                         // Check the exit status of the Anchore policy evaluation
                         // A non-zero exit status usually indicates a policy violation.
@@ -127,12 +120,7 @@ pipeline {
                         // Optional: Generate an SBOM (Software Bill of Materials) report
                         echo "Generating SBOM for ${FULL_DOCKER_IMAGE}"
                         sh """
-                            docker run --rm \
-                                -e ANCHORE_CLI_USER=${ANCHORE_CLI_USER} \
-                                -e ANCHORE_CLI_PASS=${ANCHORE_CLI_PASS} \
-                                -e ANCHORE_CLI_URL=${ANCHORE_ENGINE_URL} \
-                                anchore/cli:latest \
-                                image sbom ${FULL_DOCKER_IMAGE} spdx > ${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json
+                            anchorectl image sbom ${FULL_DOCKER_IMAGE} spdx > ${DOCKER_IMAGE_NAME}-${DOCKORE_IMAGE_TAG}-sbom.spdx.json
                         """
                         archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
                     }
