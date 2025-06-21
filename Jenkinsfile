@@ -17,12 +17,16 @@ pipeline {
         // Full Docker image name including registry (if pushing)
         FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // Example Docker Hub username/image
 
-        // Anchore API endpoint (ANCHORE_CLI_URL is used by anchorectl to connect to the Anchore service)
-        ANCHORE_CLI_URL = "https://anchore.nizati.com/" // Replace with your Anchore host/IP
+        // Anchore API endpoint - using newer ANCHORECTL_URL for anchorectl
+        // If using Anchore Enterprise, this URL should point to the base URL of your
+        // Anchore Enterprise API service, typically without a /v1 or /v2 path.
+        // Example: "https://your-anchore-enterprise.com" or "http://your-anchore-enterprise-internal-ip:8228"
+        ANCHORECTL_URL = "https://anchore.nizati.com/" // Corrected: Using ANCHORECTL_URL and user's provided URL
+
         // Policy to evaluate against (optional, 'default' is common)
-        ANCHORE_POLICY = "Anchore Enterprise - Secure v20250101"
+        ANCHORE_POLICY = "Anchore Enterprise - Secure v20250101" // User's specified policy name
         // anchorectl version to install
-        ANCHORECTL_VERSION = "v5.18.0"
+        ANCHORECTL_VERSION = "v5.18.0" // User's specified version
     }
 
     // Stages of the pipeline
@@ -51,8 +55,6 @@ pipeline {
         }
 
         // Stage 3: Push Docker Image to Registry (Optional)
-        // Uncomment this stage if you need to push the image to a registry
-        // (e.g., Docker Hub, private registry) before scanning.
         /*
         stage('Push Docker Image') {
             steps {
@@ -92,11 +94,11 @@ pipeline {
                 echo "Scanning Docker image with Anchore: ${FULL_DOCKER_IMAGE}"
                 script {
                     // Bind Anchore credentials from Jenkins to environment variables
-                    // These variables (ANCHORE_CLI_USER, ANCHORE_CLI_PASS) are picked up by anchorectl
-                    withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORE_CLI_USER'),
-                                     string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORE_CLI_PASS')]) {
+                    // Using the new ANCHORECTL_USERNAME and ANCHORECTL_PASSWORD variables for anchorectl
+                    withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORECTL_USERNAME'), // Corrected variable name
+                                     string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORECTL_PASSWORD')]) { // Corrected variable name
                         // Add the Docker image to Anchore for analysis
-                        // anchorectl uses ANCHORE_CLI_URL from the environment for connection
+                        // anchorectl uses ANCHORECTL_URL from the environment for connection
                         sh "anchorectl image add ${FULL_DOCKER_IMAGE}"
 
                         // Wait for the image analysis to complete in Anchore
@@ -105,13 +107,15 @@ pipeline {
 
                         // Evaluate the image against a policy
                         echo "Evaluating image against policy: ${ANCHORE_POLICY}"
+                        // Policy name passed via --policy flag
                         def anchorePolicyCheckResult = sh(script: """
-                            anchorectl image check ${FULL_DOCKER_IMAGE}
+                            anchorectl image check --policy "${ANCHORE_POLICY}" ${FULL_DOCKER_IMAGE}
                         """, returnStatus: true) // Return the exit status
 
                         // Check the exit status of the Anchore policy evaluation
                         // A non-zero exit status usually indicates a policy violation.
-                        if (anchorePolicyCheckResult = 0) {
+                        // Corrected comparison: use '==' for equality, and '!= 0' for failure
+                        if (anchorePolicyCheckResult != 0) {
                             error "Anchore policy evaluation failed for ${FULL_DOCKER_IMAGE}. Check logs for details."
                         } else {
                             echo "Anchore policy evaluation passed for ${FULL_DOCKER_IMAGE}."
@@ -119,7 +123,12 @@ pipeline {
 
                         // Optional: Generate an SBOM (Software Bill of Materials) report
                         echo "Generating SBOM for ${FULL_DOCKER_IMAGE}"
-                        
+                        sh """
+                            anchorectl image sbom ${FULL_DOCKER_IMAGE} spdx > ${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json
+                        """
+                        // Corrected: archive artifacts moved outside the credentials block if needed globally.
+                        // For now, it's inside, and if it fails, it's usually due to the above.
+                        archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
                     }
                 }
             }
