@@ -18,7 +18,7 @@ pipeline {
         FULL_DOCKER_IMAGE = "sopuru24/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}" // Example Docker Hub username/image
 
         // Anchore API endpoint - using newer ANCHORECTL_URL for anchorectl
-        // If using Anchore Enterprise, this URL should point to the base URL of your
+        
         // Anchore Enterprise API service, typically without a /v1 or /v2 path.
         // Example: "https://your-anchore-enterprise.com" or "http://your-anchore-enterprise-internal-ip:8228"
         ANCHORECTL_URL = "https://anchore.nizati.com/" // Corrected: Using ANCHORECTL_URL and user's provided URL
@@ -121,14 +121,7 @@ pipeline {
                             echo "Anchore policy evaluation passed for ${FULL_DOCKER_IMAGE}."
                         }
 
-                        // Optional: Generate an SBOM (Software Bill of Materials) report
-                        echo "Generating SBOM for ${FULL_DOCKER_IMAGE}"
-                        sh """
-                            anchorectl system status
-                        """
-                        // Corrected: archive artifacts moved outside the credentials block if needed globally.
-                        // For now, it's inside, and if it fails, it's usually due to the above.
-                        // archiveArtifacts artifacts: "${DOCKER_IMAGE_NAME}-${DOCKER_IMAGE_TAG}-sbom.spdx.json", fingerprint: true
+                        
                     }
                 }
             }
