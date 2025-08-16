@@ -10,6 +10,10 @@ pipeline {
 
         // Credentials ID created in Jenkins for DockerHub login
         DOCKER_CREDS = "dockerhub-credentials"
+
+        // Full image name for Anchore to scan
+        FULL_IMAGE = "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}"
+        ANCHORE_FILE_NAME = "anchore_images.txt"
     }
 
     stages {
@@ -22,7 +26,6 @@ pipeline {
         stage('Build & Push with Kaniko') {
             agent {
                 docker {
-                    // Official Kaniko executor image
                     image 'gcr.io/kaniko-project/executor:latest'
                     args '--entrypoint=""'
                 }
@@ -45,7 +48,7 @@ pipeline {
                         /kaniko/executor \
                           --context `pwd` \
                           --dockerfile `pwd`/Dockerfile \
-                          --destination ${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          --destination ${FULL_IMAGE} \
                           --cleanup
                     '''
                 }
@@ -54,11 +57,12 @@ pipeline {
 
         stage('Anchore Scan') {
             steps {
-                anchore name: 'anchore_scan', 
-                        image: "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}", 
-                        forceAnalyze: true, 
-                        bailOnFail: false, 
-                        timeout: 600
+                // Create a file for the Anchore plugin to read
+                sh "echo '${FULL_IMAGE}' > ${ANCHORE_FILE_NAME}"
+
+                // Now call the Anchore step with the correct 'name' parameter
+                anchore name: "${ANCHORE_FILE_NAME}",
+                        bailOnFail: false
             }
         }
     }
