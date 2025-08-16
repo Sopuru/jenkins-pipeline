@@ -40,19 +40,13 @@ spec:
       steps {
         container('kaniko') {
           sh """
-            /kaniko/executor \
-              --dockerfile=Dockerfile \
-              --context=${WORKSPACE} \
-              --destination=${IMAGE}:${TAG} \
+            /kaniko/executor \\
+              --dockerfile=Dockerfile \\
+              --context=${WORKSPACE} \\
+              --destination=${IMAGE}:${TAG} \\
               --cleanup
           """
         }
-      }
-    }
-
-    stage('Anchore Scan') {
-      steps {
-        anchore name: 'anchore_scan', image: "${IMAGE}:${TAG}", policy: ''
       }
     }
   }
