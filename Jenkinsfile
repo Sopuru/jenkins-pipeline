@@ -59,7 +59,7 @@ spec:
 
     // NEW STAGES FOR ANCHORE
     stage('Install Anchorectl CLI') {
-      steps {
+      steps { // <<-- Missing steps block
         // Run this step in the default 'jnlp' agent container
         container('jnlp') {
           steps {
@@ -70,11 +70,11 @@ spec:
             """
           }
         }
-      }
+      } // <<-- Missing steps block
     }
     
     stage('Scan with Anchore') {
-      steps {
+      steps { // <<-- Missing steps block
         // Run this step in the default 'jnlp' agent container
         container('jnlp') {
           steps {
@@ -99,7 +99,7 @@ spec:
             }
           }
         }
-      }
+      } // <<-- Missing steps block
     }
   }
 }
