@@ -8,7 +8,6 @@ metadata:
   labels:
     jenkins: kaniko
 spec:
-  serviceAccountName: jenkins
   containers:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:debug
@@ -17,6 +16,7 @@ spec:
     volumeMounts:
     - name: workspace-volume
       mountPath: /home/jenkins/agent
+  serviceAccountName: jenkins
   volumes:
   - name: workspace-volume
     emptyDir: {}
@@ -42,13 +42,10 @@ spec:
     stage('Build and Push with Kaniko') {
       steps {
         container('kaniko') {
-          withCredentials([usernamePassword(credentialsId: 'dockerhub-pat',
-                                            usernameVariable: 'DOCKER_USER',
-                                            passwordVariable: 'DOCKER_PASS')]) {
+          withCredentials([usernamePassword(credentialsId: 'dockerhub-pat', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
             sh """
               mkdir -p /kaniko/.docker
               echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"\$DOCKER_USER\\",\\"password\\":\\"\$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
-
               /kaniko/executor \\
                 --dockerfile=Dockerfile \\
                 --context=${WORKSPACE} \\
@@ -60,39 +57,42 @@ spec:
       }
     }
 
-    // New stages for Anchore scan
+    // NEW STAGES FOR ANCHORE
     stage('Install Anchorectl CLI') {
-      steps {
-        echo "Installing anchorectl CLI version ${ANCHORECTL_VERSION}..."
-        sh """
-          apk add --no-cache curl || true
-          curl -sSfL https://anchorectl-releases.anchore.io/anchorectl/install.sh | sh -s -- -b /usr/local/bin ${ANCHORECTL_VERSION}
-          anchorectl --version
-        """
+      // Run this step in the default 'jnlp' agent container
+      container('jnlp') {
+        steps {
+          echo "Installing anchorectl CLI version ${ANCHORECTL_VERSION}..."
+          sh """
+            # Use curl to get the installation script and install to a user-writable location
+            curl -sSfL https://anchorectl-releases.anchore.io/anchorectl/install.sh | sh -s -- -b /home/jenkins/agent/bin ${ANCHORECTL_VERSION}
+          """
+        }
       }
     }
-
+    
     stage('Scan with Anchore') {
-      steps {
-        echo "Scanning Docker image with Anchore: ${IMAGE}:${TAG}"
-        script {
+      // Run this step in the default 'jnlp' agent container
+      container('jnlp') {
+        steps {
+          echo "Scanning Docker image with Anchore: ${IMAGE}:${TAG}"
           withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORECTL_USERNAME'),
                            string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORECTL_PASSWORD')]) {
-            sh "anchorectl image add ${IMAGE}:${TAG}"
-
-            echo "Waiting for image analysis to complete in Anchore..."
-            sh "anchorectl image wait ${IMAGE}:${TAG}"
-
-            echo "Evaluating image against policy: ${ANCHORE_POLICY}"
-            def anchorePolicyCheckResult = sh(script: """
-              anchorectl image check --policy "${ANCHORE_POLICY}" ${IMAGE}:${TAG}
-            """, returnStatus: true)
-
-            if (anchorePolicyCheckResult != 0) {
-              error "Anchore policy evaluation failed for ${IMAGE}:${TAG}. Check logs for details."
-            } else {
-              echo "Anchore policy evaluation passed for ${IMAGE}:${TAG}."
-            }
+            sh """
+              # Add the newly installed anchorectl to the PATH
+              export PATH=\$PATH:/home/jenkins/agent/bin
+              # Add the Docker image to Anchore for analysis
+              anchorectl image add ${IMAGE}:${TAG}
+              # Wait for the image analysis to complete in Anchore
+              anchorectl image wait ${IMAGE}:${TAG}
+              # Evaluate the image against a policy
+              if anchorectl image check --policy "${ANCHORE_POLICY}" ${IMAGE}:${TAG}; then
+                echo "Anchore policy evaluation passed."
+              else
+                echo "Anchore policy evaluation failed."
+                exit 1
+              fi
+            """
           }
         }
       }
