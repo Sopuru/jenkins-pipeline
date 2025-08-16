@@ -14,16 +14,13 @@ spec:
     image: gcr.io/kaniko-project/executor:debug
     command: ["/bin/sh", "-c"]
     args: ["sleep infinity"]
+    # No volume mount needed for the secret here!
     volumeMounts:
-    - name: docker-config
-      mountPath: /kaniko/.docker
+    - name: workspace-volume
+      mountPath: /home/jenkins/agent
   volumes:
-  - name: docker-config
-    secret:
-      secretName: dockerhub-secret
-      items:
-      - key: ".dockerconfigjson"
-        path: "config.json"
+  - name: workspace-volume
+    emptyDir: {}
 """
     }
   }
@@ -41,13 +38,22 @@ spec:
     stage('Build and Push with Kaniko') {
       steps {
         container('kaniko') {
-          sh """
-            /kaniko/executor \\
-              --dockerfile=Dockerfile \\
-              --context=${WORKSPACE} \\
-              --destination=${IMAGE}:${TAG} \\
-              --cleanup
-          """
+          // Use the withCredentials step to access the PAT
+          withCredentials([usernamePassword(credentialsId: 'dockerhub-pat',
+                                            usernameVariable: 'DOCKER_USER',
+                                            passwordVariable: 'DOCKER_PASS')]) {
+            sh """
+              # Create the config.json file in the Kaniko container
+              mkdir -p /kaniko/.docker
+              echo "{\\"auths\\":{\\"https://index.docker.io/v1/\\":{\\"username\\":\\"\$DOCKER_USER\\",\\"password\\":\\"\$DOCKER_PASS\\"}}}" > /kaniko/.docker/config.json
+
+              /kaniko/executor \\
+                --dockerfile=Dockerfile \\
+                --context=${WORKSPACE} \\
+                --destination=${IMAGE}:${TAG} \\
+                --cleanup
+            """
+          }
         }
       }
     }
