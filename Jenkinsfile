@@ -59,47 +59,36 @@ spec:
 
     // NEW STAGES FOR ANCHORE
     stage('Install Anchorectl CLI') {
-      steps { // <<-- Missing steps block
-        // Run this step in the default 'jnlp' agent container
+      steps {
         container('jnlp') {
-          steps {
-            echo "Installing anchorectl CLI version ${ANCHORECTL_VERSION}..."
-            sh """
-              # Use curl to get the installation script and install to a user-writable location
-              curl -sSfL https://anchorectl-releases.anchore.io/anchorectl/install.sh | sh -s -- -b /home/jenkins/agent/bin ${ANCHORECTL_VERSION}
-            """
-          }
+          echo "Installing anchorectl CLI version ${ANCHORECTL_VERSION}..."
+          sh """
+            curl -sSfL https://anchorectl-releases.anchore.io/anchorectl/install.sh | sh -s -- -b /home/jenkins/agent/bin ${ANCHORECTL_VERSION}
+          """
         }
-      } // <<-- Missing steps block
+      }
     }
     
     stage('Scan with Anchore') {
-      steps { // <<-- Missing steps block
-        // Run this step in the default 'jnlp' agent container
+      steps {
         container('jnlp') {
-          steps {
-            echo "Scanning Docker image with Anchore: ${IMAGE}:${TAG}"
-            withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORECTL_USERNAME'),
-                             string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORECTL_PASSWORD')]) {
-              sh """
-                # Add the newly installed anchorectl to the PATH
-                export PATH=\$PATH:/home/jenkins/agent/bin
-                # Add the Docker image to Anchore for analysis
-                anchorectl image add ${IMAGE}:${TAG}
-                # Wait for the image analysis to complete in Anchore
-                anchorectl image wait ${IMAGE}:${TAG}
-                # Evaluate the image against a policy
-                if anchorectl image check --policy "${ANCHORE_POLICY}" ${IMAGE}:${TAG}; then
-                  echo "Anchore policy evaluation passed."
-                else
-                  echo "Anchore policy evaluation failed."
-                  exit 1
-                fi
-              """
-            }
+          echo "Scanning Docker image with Anchore: ${IMAGE}:${TAG}"
+          withCredentials([string(credentialsId: 'ANCHORE_USER', variable: 'ANCHORECTL_USERNAME'),
+                           string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORECTL_PASSWORD')]) {
+            sh """
+              export PATH=\$PATH:/home/jenkins/agent/bin
+              anchorectl image add ${IMAGE}:${TAG}
+              anchorectl image wait ${IMAGE}:${TAG}
+              if anchorectl image check --policy "${ANCHORE_POLICY}" ${IMAGE}:${TAG}; then
+                echo "Anchore policy evaluation passed."
+              else
+                echo "Anchore policy evaluation failed."
+                exit 1
+              fi
+            """
           }
         }
-      } // <<-- Missing steps block
+      }
     }
   }
 }
