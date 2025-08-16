@@ -25,7 +25,7 @@ spec:
     }
   }
   environment {
-    IMAGE = "docker.io/your-dockerhub-username/your-image"
+    IMAGE = "docker.io/sopuru24/joshua"
     TAG = "latest"
   }
   stages {
