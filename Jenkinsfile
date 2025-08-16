@@ -11,9 +11,7 @@ spec:
   serviceAccountName: jenkins
   containers:
   - name: kaniko
-    # Use the debug version of the image which has a shell
     image: gcr.io/kaniko-project/executor:debug
-    # Keep the container running indefinitely
     command: ["/bin/sh", "-c"]
     args: ["sleep infinity"]
     volumeMounts:
@@ -23,6 +21,9 @@ spec:
   - name: docker-config
     secret:
       secretName: dockerhub-secret
+      items:
+      - key: ".dockerconfigjson"
+        path: "config.json"
 """
     }
   }
