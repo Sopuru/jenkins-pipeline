@@ -2,69 +2,70 @@ pipeline {
     agent any
 
     environment {
-        REGISTRY = "docker.io"
-        IMAGE_NAME = "your-dockerhub-username/your-image"
-        TAG = "latest"
+        // DockerHub image details
+        DOCKERHUB_REGISTRY = "docker.io"
+        DOCKERHUB_NAMESPACE = "your-dockerhub-namespace"
+        IMAGE_NAME = "your-app"
+        IMAGE_TAG = "latest"
+
+        // Credentials ID created in Jenkins for DockerHub login
+        DOCKER_CREDS = "dockerhub-credentials"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
+                git branch: 'main', url: 'https://github.com/Sopuru/jenkins-pipeline.git'
             }
         }
 
-        stage('Docker Build') {
-            steps {
-                script {
-                    docker.build("${IMAGE_NAME}:${TAG}")
+        stage('Build & Push with Kaniko') {
+            agent {
+                docker {
+                    // Official Kaniko executor image
+                    image 'gcr.io/kaniko-project/executor:latest'
+                    args '--entrypoint=""'
                 }
             }
-        }
-
-        stage('Docker Login') {
             steps {
-                withCredentials([kubeconfigFile(credentialsId: 'regcred', variable: 'KUBECONFIG')]) {
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDS}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        echo "Logging in to DockerHub..."
-                        echo $DOCKER_CONFIG_JSON | base64 -d > /tmp/config.json
-                        export DOCKER_CONFIG=/tmp
-                        docker login -u $(jq -r '.auths["https://index.docker.io/v1/"].username' /tmp/config.json) \
-                                     -p $(jq -r '.auths["https://index.docker.io/v1/"].password' /tmp/config.json)
-                    '''
-                }
-            }
-        }
+                        mkdir -p /kaniko/.docker
+                        cat > /kaniko/.docker/config.json <<EOF
+                        {
+                          "auths": {
+                            "${DOCKERHUB_REGISTRY}": {
+                              "username": "${DOCKER_USER}",
+                              "password": "${DOCKER_PASS}"
+                            }
+                          }
+                        }
+                        EOF
 
-        stage('Push Image') {
-            steps {
-                script {
-                    sh "docker push ${IMAGE_NAME}:${TAG}"
+                        /kaniko/executor \
+                          --context `pwd` \
+                          --dockerfile `pwd`/Dockerfile \
+                          --destination ${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          --cleanup
+                    '''
                 }
             }
         }
 
         stage('Anchore Scan') {
             steps {
-                script {
-                    // Anchore plugin step (make sure Anchore plugin is installed in Jenkins)
-                    anchore name: "${IMAGE_NAME}:${TAG}", 
-                            policyBundleId: '', 
-                            bailOnFail: true
-                }
+                anchore name: 'anchore_scan', 
+                        image: "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}", 
+                        forceAnalyze: true, 
+                        bailOnFail: false, 
+                        timeout: 600
             }
         }
     }
 
     post {
         always {
-            sh 'docker logout'
-        }
-        success {
-            echo "✅ Build, Push & Scan completed successfully!"
-        }
-        failure {
-            echo "❌ Build or Scan failed!"
+            echo 'Pipeline finished.'
         }
     }
 }
