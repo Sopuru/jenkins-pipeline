@@ -12,9 +12,11 @@ spec:
   containers:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:latest
+    # Corrected command to keep the container alive
     command:
-    - cat
-    tty: true
+    - /busybox/sh
+    - -c
+    - "sleep infinity"
     volumeMounts:
     - name: docker-config
       mountPath: /kaniko/.docker
