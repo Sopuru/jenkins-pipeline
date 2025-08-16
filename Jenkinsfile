@@ -11,11 +11,11 @@ spec:
   serviceAccountName: jenkins
   containers:
   - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
-    # Corrected command to keep the container alive.
-    # The image does not have a shell, so we must use a simple command.
-    command: ["/kaniko/executor"]
-    args: ["--help"]
+    # Use the debug version of the image which has a shell
+    image: gcr.io/kaniko-project/executor:debug
+    # Keep the container running indefinitely
+    command: ["/bin/sh", "-c"]
+    args: ["sleep infinity"]
     volumeMounts:
     - name: docker-config
       mountPath: /kaniko/.docker
