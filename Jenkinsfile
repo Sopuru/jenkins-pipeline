@@ -77,7 +77,8 @@ spec:
                            string(credentialsId: 'ANCHORE_PASS', variable: 'ANCHORECTL_PASSWORD')]) {
             sh """
               export PATH=\$PATH:/home/jenkins/agent/bin
-              anchorectl image add ${IMAGE}:${TAG}
+              anchorectl image add ${IMAGE}:${TAG} --wait
+              
               anchorectl image wait ${IMAGE}:${TAG}
               if anchorectl image check --policy "${ANCHORE_POLICY}" ${IMAGE}:${TAG}; then
                 echo "Anchore policy evaluation passed."
